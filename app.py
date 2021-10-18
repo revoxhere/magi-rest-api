@@ -43,7 +43,7 @@ magi_rpc_pass = os.getenv('MAGI_RPC_PASS')
 DATABASE = 'magi-db.db'
 BCRYPT_ROUNDS = 6
 DB_TIMEOUT = 3
-SAVE_TIME = 15
+SAVE_TIME = 30
 
 config = {
     "DEBUG": False,
@@ -57,7 +57,7 @@ def forwarded_ip_check():
     return request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
 
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='config/error_pages')
 app.config.from_mapping(config)
 cache = Cache(app)
 CORS(app)
@@ -73,7 +73,7 @@ ip_ban = IpBan(ban_seconds=60*60, ban_count=10,
 ip_ban.init_app(app)
 
 overrides = [MAGI_PASS]
-banlist = []
+banlist, observations = [], {}
 magi = rvxMagi(magi_rpc_user, magi_rpc_pass)
 print(magi.get_balance(), "XMG total")
 
@@ -120,6 +120,67 @@ def send_registration_email(username, email):
     except Exception as e:
         print(traceback.format_exc())
         return False
+
+
+@app.errorhandler(429)
+def error429(e):
+    global observations
+    ip_addr = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
+    ip_ban.add(ip=ip_addr)
+
+    try:
+        observations[ip_addr] += 1
+    except:
+        observations[ip_addr] = 1
+
+    if observations[ip_addr] > 20:
+        dbg("Too many observations", ip_addr)
+        if not ip_addr in whitelist:
+            ip_ban.block(ip_addr)
+        return render_template('403.html'), 403
+    else:
+        limit_err = str(e).replace("429 Too Many Requests: ", "")
+        dbg("Error 429", ip_addr, limit_err, os.getpid())
+        return render_template('429.html', limit=limit_err), 429
+
+
+@app.errorhandler(404)
+def error404(e):
+    ip_addr = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
+    page_name = str(request.url)
+    ip_ban.add(ip=ip_addr)
+
+    dbg("Error 404", ip_addr, page_name)
+    return render_template('404.html', page_name=page_name), 404
+
+
+@app.errorhandler(500)
+def error500(e):
+    ip_addr = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
+
+    dbg("Error 500", ip_addr)
+    return render_template('500.html'), 500
+
+
+@app.errorhandler(403)
+def error403(e):
+    ip_addr = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)
+    ip_ban.add(ip=ip_addr)
+    ip_ban.block(ip_addr)
+
+    dbg("Error 403", ip_addr)
+
+    try:
+        observations[ip_addr] += 1
+    except:
+        observations[ip_addr] = 1
+
+    if observations[ip_addr] > 40:
+        dbg("Too many observations - banning", ip_addr)
+        if not ip_addr in whitelist:
+            ip_addr_ban(ip_addr)
+
+    return render_template('403.html'), 403
 
 
 @app.route("/balances/<username>")
@@ -223,9 +284,17 @@ def get_stats():
     dbg("/GET/statistics", ip_addr)
 
     try:
+        with sqlconn(DATABASE, timeout=DB_TIMEOUT) as conn:
+            datab = conn.cursor()
+            datab.execute(
+                """SELECT *
+                    FROM Users""")
+            users = datab.fetchall()
         while True:
             try:
-                return _success(magi.statistics())
+                to_return = magi.statistics()
+                to_return["users"] = len(users)
+                return _success(to_return)
             except Exception as e:
                 if str(e) != "Request-sent":
                     raise
@@ -327,7 +396,7 @@ def api_transaction():
 
             dbg("Successfully transferred", amount, "from",
                 username, "to", recipient, global_last_block_hash_cp)
-
+            cache.clear()
             return _success("OK,Successfully transferred funds,"
                             + str(global_last_block_hash_cp))
     except Exception as e:
