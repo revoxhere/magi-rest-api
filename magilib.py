@@ -138,7 +138,7 @@ class rvxMagi():
         info = self.magi.getmininginfo()
         diff = info["difficulty"]
 
-        res = {
+        return {
             "difficulty": {
                 "pow": float(diff["proof-of-work"]),
                 "pos": float(diff["proof-of-stake"])
@@ -147,10 +147,10 @@ class rvxMagi():
             "blocks": int(info["blocks"]),
             "reward": float(info["blockvalue"]["blockvalue"]),
             "hashrate": float(info["networkhashps"]),
-            "price": rvxMagi.get_price(self)
+            "price": rvxMagi.get_price(self),
+            "stake_interest": float(info["stakeinterest"]),
+            "hours_to_stake": float(info["Expected PoS (hours)"]),
         }
-
-        return res
 
     def get_balance(self, account=None):
         """
