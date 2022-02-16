@@ -21,13 +21,28 @@ class rvxMagi():
         """
         self.coingecko = get("https://api.coingecko.com/api/v3/simple/"
                              + "price?ids=bitcoin&vs_currencies=usd").json()
-        self.btcpop = get("https://btcpop.co/api/market-public.php").json()
-        self.total_blocks = int(get(
-            "https://chainz.cryptoid.info/xmg/api.dws?q=getblockcount").text)
-        self.ducoexchange = get(
-            "https://exchange.duinocoin.com/api/v1/rates").json()
-        self.duco_api = get(
-            "https://raw.githubusercontent.com/revoxhere/duco-statistics/master/api.json").json()
+        try:
+            self.btcpop = get("https://btcpop.co/api/market-public.php").json()
+        except:
+            self.btcpop = {}
+
+        try:
+            self.total_blocks = int(get(
+                "https://chainz.cryptoid.info/xmg/api.dws?q=getblockcount").text)
+        except:
+            self.total_blocks = 0
+
+        try:
+            self.ducoexchange = get(
+                "https://exchange.duinocoin.com/api/v1/rates").json()
+        except:
+            self.ducoexchange = {}
+
+        try:
+            self.duco_api = get(
+                "https://raw.githubusercontent.com/revoxhere/duco-statistics/master/api.json").json()
+        except:
+            self.duco_api = {}
 
         self.blocks = 1
         self.new_time = time()
@@ -107,12 +122,19 @@ class rvxMagi():
 
     def get_price(self):
         def _get_btcpop_price():
-            for row in self.btcpop:
-                if row["ticker"] == "XMG":
-                    return float(row["lastTradePrice"]) * float(self.coingecko["bitcoin"]["usd"])
+            try:
+                for row in self.btcpop:
+                    if row["ticker"] == "XMG":
+                        return float(row["lastTradePrice"]) * float(self.coingecko["bitcoin"]["usd"])
+                return 0
+            except:
+                return 0
 
         def _get_ducoexchange_price():
-            return self.ducoexchange["result"]["xmg"]["buy"] * self.duco_api["Duco price"]
+            try:
+                return self.ducoexchange["result"]["xmg"]["buy"] * self.duco_api["Duco price"]
+            except:
+                return 0
 
         def _get_moondex_price():
             """
@@ -123,9 +145,9 @@ class rvxMagi():
             return 0
 
         prices = {
-            "btcpop": round(_get_btcpop_price(), 8),
-            "ducoexchange": round(_get_ducoexchange_price(), 8),
-            "moondex": round(_get_moondex_price(), 8)
+            "btcpop": _get_btcpop_price(),
+            "ducoexchange": _get_ducoexchange_price(),
+            "moondex": _get_moondex_price()
         }
         prices["max"] = prices[max(prices, key=prices.get)]
 
@@ -138,6 +160,22 @@ class rvxMagi():
         info = self.magi.getmininginfo()
         diff = info["difficulty"]
 
+        try:
+            connections = self.magi.getconnectioncount()
+        except:
+            connections = 0
+
+        try:
+            hours_to_stake = round(float(info["Expected PoS (days)"]) * 24, 2)
+        except:
+            try:
+                hours_to_stake = round(float(info["Expected PoS (hours)"]), 2)
+            except:
+                try:
+                    hours_to_stake = round(float(info["Expected PoS (minutes)"]) / 60, 2)
+                except:
+                    hours_to_stake = "unknown"
+
         return {
             "difficulty": {
                 "pow": float(diff["proof-of-work"]),
@@ -148,8 +186,10 @@ class rvxMagi():
             "reward": float(info["blockvalue"]["blockvalue"]),
             "hashrate": float(info["networkhashps"]),
             "price": rvxMagi.get_price(self),
+            "connections": connections,
             "stake_interest": float(info["stakeinterest"]),
-            "hours_to_stake": float(info["Expected PoS (hours)"]),
+            "hours_to_stake": hours_to_stake,
+            "total_balance": float(self.magi.getbalance()),
         }
 
     def get_balance(self, account=None):
